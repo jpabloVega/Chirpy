@@ -1,11 +1,17 @@
 package main
 
 import (
+	"Chirpy/internal/database"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 	"unicode/utf8"
+
+	"Chirpy/internal/database"
+
+	"github.com/google/uuid"
 )
 
 func handlerReadiness(w http.ResponseWriter, req *http.Request) {
@@ -14,9 +20,11 @@ func handlerReadiness(w http.ResponseWriter, req *http.Request) {
 	w.Write([]byte(http.StatusText(http.StatusOK)))
 }
 
-func validateChirp(w http.ResponseWriter, req *http.Request) {
+func (cfg *apiConfig) createChirp(w http.ResponseWriter, req *http.Request) {
+
 	type chirpBody struct {
-		Body string `json:"body"`
+		Body   string    `json:"body"`
+		UserId uuid.UUID `json:"user_id"`
 	}
 
 	decoder := json.NewDecoder(req.Body)
@@ -34,15 +42,39 @@ func validateChirp(w http.ResponseWriter, req *http.Request) {
 
 	filteredChirp := removeProfanity(chirp.Body)
 
-	type response struct {
-		CleanedBody string `json:"cleaned_body"`
+	chirpParams := database.CreateChirpParams{
+		Body:   filteredChirp,
+		UserID: chirp.UserId,
 	}
 
-	res := response{
-		CleanedBody: filteredChirp,
+	dbRes, err := cfg.dbQueries.CreateChirp(req.Context(), chirpParams)
+	if err != nil {
+		respondWithError(w, 400, "Error adding chirp to database")
 	}
 
-	respondWithJSON(w, 200, res)
+	type ChirpResponse struct {
+		Id        uuid.UUID `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Body      string    `json:"body"`
+		UserId    uuid.UUID `json:"user_id"`
+	}
+
+	chirpRes := ChirpResponse{
+		Id:        dbRes.ID,
+		CreatedAt: dbRes.CreatedAt,
+		UpdatedAt: dbRes.UpdatedAt,
+		Body:      dbRes.Body,
+		UserId:    dbRes.UserID,
+	}
+	chirpJson, err := json.Marshal(&chirpRes)
+	if err != nil {
+		respondWithError(w, 400, "Error marshalling chirp")
+	}
+
+	w.WriteHeader(201)
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(chirpJson)
 }
 
 func respondWithError(w http.ResponseWriter, code int, msg string) {

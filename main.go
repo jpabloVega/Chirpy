@@ -35,7 +35,8 @@ func main() {
 	ServeMux.HandleFunc("GET /api/healthz", handlerReadiness)
 	ServeMux.HandleFunc("GET /admin/metrics", apiCfg.handlerMetrics)
 	ServeMux.HandleFunc("POST /admin/reset", apiCfg.handlerReset)
-	ServeMux.HandleFunc("POST /api/validate_chirp", validateChirp)
+	ServeMux.HandleFunc("POST /api/validate_chirp", apiCfg.createChirp)
+	ServeMux.HandleFunc("POST /api/users", apiCfg.addUser)
 
 	server := &http.Server{
 		Handler: ServeMux,
@@ -71,6 +72,11 @@ func (cfg *apiConfig) handlerMetrics(w http.ResponseWriter, req *http.Request) {
 
 func (cfg *apiConfig) handlerReset(w http.ResponseWriter, req *http.Request) {
 	cfg.fileserverHits.Store(0)
+	err := cfg.dbQueries.ResetUsers(req.Context())
+	if err != nil {
+		log.Printf("Error deleting users: %v", err)
+		return
+	}
 	w.WriteHeader(200)
 	w.Write([]byte("File server hits reset to 0"))
 }
