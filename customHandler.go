@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/jpabloVega/Chirpy/internal/auth"
 	"github.com/jpabloVega/Chirpy/internal/database"
 )
 
@@ -20,14 +21,27 @@ func handlerReadiness(w http.ResponseWriter, req *http.Request) {
 
 func (cfg *apiConfig) createChirp(w http.ResponseWriter, req *http.Request) {
 
+	userToken, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		log.Printf("Error getting the request header: %v", err)
+		respondWithError(w, 400, "Invalid header")
+		return
+	}
+
+	userID, err := auth.ValidateJWT(userToken, cfg.secret)
+	if err != nil {
+		log.Printf("Error validating the token: %v", err)
+		respondWithError(w, 401, "Unauthorized")
+		return
+	}
+
 	type chirpBody struct {
-		Body   string    `json:"body"`
-		UserId uuid.UUID `json:"user_id"`
+		Body string `json:"body"`
 	}
 
 	decoder := json.NewDecoder(req.Body)
 	chirp := chirpBody{}
-	err := decoder.Decode(&chirp)
+	err = decoder.Decode(&chirp)
 	if err != nil {
 		log.Printf("Error decoding parameters: %v", err)
 		respondWithError(w, 400, "Error decoding request")
@@ -43,7 +57,7 @@ func (cfg *apiConfig) createChirp(w http.ResponseWriter, req *http.Request) {
 
 	chirpParams := database.CreateChirpParams{
 		Body:   filteredChirp,
-		UserID: chirp.UserId,
+		UserID: userID,
 	}
 
 	dbRes, err := cfg.dbQueries.CreateChirp(req.Context(), chirpParams)
@@ -116,6 +130,58 @@ func (cfg *apiConfig) getChirp(w http.ResponseWriter, req *http.Request) {
 	respondWithJSON(w, 200, chirpParams)
 }
 
+func (cfg *apiConfig) refreshToken(w http.ResponseWriter, req *http.Request) {
+	bearerToken, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		respondWithError(w, 401, "Invalid request header")
+		return
+	}
+
+	currToken, err := cfg.dbQueries.GetRefreshToken(req.Context(), bearerToken)
+	if err != nil {
+		respondWithError(w, 401, "Token not found")
+		return
+	}
+
+	if currToken.RevokedAt.Valid {
+		respondWithError(w, 401, "Token access revoked")
+		return
+	}
+
+	newJWT, err := auth.MakeJWT(currToken.UserID, cfg.secret, time.Second*60)
+	if err != nil {
+		log.Printf("Error creating authentication: %v", err)
+		respondWithError(w, 400, "Error creating auth")
+		return
+	}
+
+	type responseJWTToken struct {
+		Token string `json:"token"`
+	}
+	responseToken := responseJWTToken{
+		Token: newJWT,
+	}
+	respondWithJSON(w, 200, responseToken)
+
+}
+
+func (cfg *apiConfig) revokeToken(w http.ResponseWriter, req *http.Request) {
+	bearerToken, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		respondWithError(w, 401, "Invalid request header")
+		return
+	}
+
+	err = cfg.dbQueries.RevokeToken(req.Context(), bearerToken)
+	if err != nil {
+		respondWithError(w, 401, "Token not found")
+		return
+	}
+
+	w.WriteHeader(204)
+
+}
+
 func respondWithError(w http.ResponseWriter, code int, msg string) {
 	w.WriteHeader(code)
 	w.Write([]byte(msg))
@@ -125,9 +191,10 @@ func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
 	dat, err := json.Marshal(payload)
 	if err != nil {
 		respondWithError(w, 500, fmt.Sprintf("Error marshalling: %v", err))
+		return
 	}
-	w.WriteHeader(code)
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
 	w.Write(dat)
 }
 

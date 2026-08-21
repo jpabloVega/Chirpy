@@ -16,6 +16,7 @@ import (
 func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
+	secretToken := os.Getenv("TOKENSECRET")
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
 		log.Print(err)
@@ -28,6 +29,7 @@ func main() {
 	apiCfg := apiConfig{
 		fileserverHits: atomic.Int32{},
 		dbQueries:      dbQueries,
+		secret:         secretToken,
 	}
 
 	fileServerHandler := http.FileServer(rootFilePath)
@@ -40,6 +42,8 @@ func main() {
 	ServeMux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.getChirp)
 	ServeMux.HandleFunc("POST /api/users", apiCfg.addUser)
 	ServeMux.HandleFunc("POST /api/login", apiCfg.logUser)
+	ServeMux.HandleFunc("POST /api/refresh", apiCfg.refreshToken)
+	ServeMux.HandleFunc("POST /api/revoke", apiCfg.revokeToken)
 
 	server := &http.Server{
 		Handler: ServeMux,
@@ -51,6 +55,7 @@ func main() {
 type apiConfig struct {
 	fileserverHits atomic.Int32
 	dbQueries      *database.Queries
+	secret         string
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {

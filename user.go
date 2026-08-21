@@ -82,11 +82,45 @@ func (cfg *apiConfig) logUser(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if is_auth {
-		userData := NewUser{
-			Id:        dbUser.ID,
-			CreatedAt: dbUser.CreatedAt,
-			UpdatedAt: dbUser.UpdatedAt,
-			Email:     dbUser.Email,
+		var expireIn time.Duration
+		if user.ExpiresInSeconds <= 0 || user.ExpiresInSeconds > 3600 {
+			expireIn = time.Second * 3600
+		} else {
+			expireIn = time.Second * time.Duration(user.ExpiresInSeconds)
+		}
+		newJWT, err := auth.MakeJWT(dbUser.ID, cfg.secret, expireIn)
+		if err != nil {
+			log.Printf("Error creating authentication: %v", err)
+			respondWithError(w, 400, "Error creating auth")
+			return
+		}
+
+		newRefToken := auth.MakeRefreshToken()
+		if newRefToken == "" {
+			respondWithError(w, 400, "Error genetaring refresh token")
+			return
+		}
+
+		sixtyDays := 60 * 24 * time.Hour
+		refreshTokenParams := database.CreateRefreshTokenParams{
+			Token:     newRefToken,
+			UserID:    dbUser.ID,
+			ExpiresAt: time.Now().UTC().Add(sixtyDays),
+		}
+
+		_, err = cfg.dbQueries.CreateRefreshToken(req.Context(), refreshTokenParams)
+		if err != nil {
+			respondWithError(w, 400, "Error adding refresh token to database")
+			return
+		}
+
+		userData := NewUserResponse{
+			Id:           dbUser.ID,
+			CreatedAt:    dbUser.CreatedAt,
+			UpdatedAt:    dbUser.UpdatedAt,
+			Email:        dbUser.Email,
+			Token:        newJWT,
+			RefreshToken: newRefToken,
 		}
 		respondWithJSON(w, 200, userData)
 	} else {
@@ -101,7 +135,17 @@ type NewUser struct {
 	Email     string    `json:"email"`
 }
 
+type NewUserResponse struct {
+	Id           uuid.UUID `json:"id"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Email        string    `json:"email"`
+	Token        string    `json:"token"`
+	RefreshToken string    `json:"refresh_token"`
+}
+
 type userMail struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email            string `json:"email"`
+	Password         string `json:"password"`
+	ExpiresInSeconds int    `json:"expires_in_seconds"`
 }
