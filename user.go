@@ -57,6 +57,65 @@ func (cfg *apiConfig) addUser(w http.ResponseWriter, req *http.Request) {
 
 }
 
+func (cfg *apiConfig) editUser(w http.ResponseWriter, req *http.Request) {
+	bearerToken, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		respondWithError(w, 401, "Error getting bearer token")
+		return
+	}
+
+	userID, err := auth.ValidateJWT(bearerToken, cfg.secret)
+	if err != nil {
+		respondWithError(w, 401, "Unauthorized")
+		return
+	}
+
+	decoder := json.NewDecoder(req.Body)
+	user := userMail{}
+	err = decoder.Decode(&user)
+	if err != nil {
+		respondWithError(w, 400, "Error decoding request body")
+		return
+	}
+
+	passHash, err := auth.HashPassword(user.Password)
+	if err != nil {
+		respondWithError(w, 400, "Error hashing password")
+		return
+	}
+
+	is_auth, err := auth.CheckPasswordHash(user.Password, passHash)
+	if !is_auth {
+		respondWithError(w, 401, "Unauthorized")
+		return
+	}
+
+	newPassHash, err := auth.HashPassword(user.Password)
+	if err != nil {
+		respondWithError(w, 400, "Error hashing new password")
+	}
+
+	editedUserParams := database.EditUserParams{
+		ID:             userID,
+		HashedPassword: newPassHash,
+		Email:          user.Email,
+	}
+
+	editedUser, err := cfg.dbQueries.EditUser(req.Context(), editedUserParams)
+	if err != nil {
+		respondWithError(w, 400, "Error editing user in database")
+		return
+	}
+
+	finalUser := NewUser{
+		Id:        editedUser.ID,
+		CreatedAt: editedUser.CreatedAt,
+		UpdatedAt: editedUser.UpdatedAt,
+		Email:     editedUser.Email,
+	}
+	respondWithJSON(w, 200, finalUser)
+}
+
 func (cfg *apiConfig) logUser(w http.ResponseWriter, req *http.Request) {
 	decoder := json.NewDecoder(req.Body)
 	user := userMail{}

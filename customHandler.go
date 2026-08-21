@@ -130,6 +130,41 @@ func (cfg *apiConfig) getChirp(w http.ResponseWriter, req *http.Request) {
 	respondWithJSON(w, 200, chirpParams)
 }
 
+func (cfg *apiConfig) deleteChirp(w http.ResponseWriter, req *http.Request) {
+	bearerToken, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		respondWithError(w, 401, "No bearer token found")
+		return
+	}
+
+	userId, err := auth.ValidateJWT(bearerToken, cfg.secret)
+	if err != nil {
+		respondWithError(w, 401, "Unauthorized")
+		return
+	}
+
+	chirpId := req.PathValue("chirpID")
+	parsedID, err := uuid.Parse(chirpId)
+	chirpToDelete, err := cfg.dbQueries.GetChirp(req.Context(), parsedID)
+	if err != nil {
+		respondWithError(w, 404, "Chirp not found")
+	}
+
+	if chirpToDelete.UserID != userId {
+		respondWithError(w, 403, "User is not the author of the chirp")
+		return
+	}
+
+	err = cfg.dbQueries.DeleteChirp(req.Context(), chirpToDelete.ID)
+	if err != nil {
+		respondWithError(w, 400, "Error deleting the chirp")
+		return
+	}
+
+	w.WriteHeader(204)
+	w.Write([]byte("Chirp deleted successfully"))
+}
+
 func (cfg *apiConfig) refreshToken(w http.ResponseWriter, req *http.Request) {
 	bearerToken, err := auth.GetBearerToken(req.Header)
 	if err != nil {
